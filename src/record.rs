@@ -30,7 +30,7 @@ pub struct DnsRecord {
     pub serial: u32,
     pub ttl: Duration,
     pub timestamp: u32, // hours since 1601-01-01 00:00:00 UTC
-    // reserved: u32 == 0
+    pub reserved: u32,
     pub data: RecordData,
 }
 impl enc::MsDecodable for DnsRecord {
@@ -53,12 +53,9 @@ impl enc::MsDecodable for DnsRecord {
             return Err(enc::Error::InvalidData);
         }
         let serial = u32::from_le_bytes(slice[8..12].try_into().unwrap());
-        let ttl_seconds = u32::from_le_bytes(slice[12..16].try_into().unwrap());
+        let ttl_seconds = u32::from_be_bytes(slice[12..16].try_into().unwrap());
         let timestamp = u32::from_le_bytes(slice[16..20].try_into().unwrap());
         let reserved = u32::from_le_bytes(slice[20..24].try_into().unwrap());
-        if reserved != 0 {
-            return Err(enc::Error::InvalidData);
-        }
 
         let ttl = Duration::from_secs(ttl_seconds.into());
 
@@ -190,6 +187,7 @@ impl enc::MsDecodable for DnsRecord {
             serial,
             ttl,
             timestamp,
+            reserved,
             data,
         })
     }
@@ -446,8 +444,8 @@ impl enc::ZoneEncodable for RecordData {
                 Self::AuthenticatedDenial3(data) => enc::ZoneEncodable::try_encode(data, encoder, writer)?,
                 Self::AuthenticatedDenial3Parameters(data) => enc::ZoneEncodable::try_encode(data, encoder, writer)?,
                 Self::DaneTlsa(data) => enc::ZoneEncodable::try_encode(data, encoder, writer)?,
-                Self::Other { kind, data } => {
-                    write!(writer, "TYPE{} \\# {}", kind, data.len())?;
+                Self::Other { data, .. } => {
+                    write!(writer, "\\# {}", data.len())?;
                     if data.len() > 0 {
                         write!(writer, " ")?;
                         for b in data {
@@ -898,7 +896,7 @@ pub struct Ipv4AddressData {
 }
 impl enc::MsDecodable for Ipv4AddressData {
     fn try_decode(slice: &[u8]) -> Result<Self, enc::Error> {
-        if slice.len() == 4 {
+        if slice.len() != 4 {
             return Err(enc::Error::WrongLength);
         }
         let address = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
@@ -927,7 +925,7 @@ pub struct Ipv6AddressData {
 }
 impl enc::MsDecodable for Ipv6AddressData {
     fn try_decode(slice: &[u8]) -> Result<Self, enc::Error> {
-        if slice.len() == 16 {
+        if slice.len() != 16 {
             return Err(enc::Error::WrongLength);
         }
         let address_bits = u128::from_be_bytes(slice.try_into().unwrap());
@@ -1235,9 +1233,9 @@ impl enc::MsDecodable for ServerSelectionData {
             return Err(enc::Error::WrongLength);
         }
 
-        let priority = u16::from_le_bytes(slice[0..2].try_into().unwrap());
-        let weight = u16::from_le_bytes(slice[2..4].try_into().unwrap());
-        let port = u16::from_le_bytes(slice[4..6].try_into().unwrap());
+        let priority = u16::from_be_bytes(slice[0..2].try_into().unwrap());
+        let weight = u16::from_be_bytes(slice[2..4].try_into().unwrap());
+        let port = u16::from_be_bytes(slice[4..6].try_into().unwrap());
 
         let mut index = 6;
         let target = parse_ms_dns_name(slice, &mut index)?;
@@ -1379,11 +1377,11 @@ impl enc::MsDecodable for StartOfAuthorityData {
             return Err(enc::Error::WrongLength);
         }
 
-        let serial_number = u32::from_le_bytes(slice[0..4].try_into().unwrap());
-        let refresh = u32::from_le_bytes(slice[4..8].try_into().unwrap());
-        let retry = u32::from_le_bytes(slice[8..12].try_into().unwrap());
-        let expire = u32::from_le_bytes(slice[12..16].try_into().unwrap());
-        let minimum_ttl = u32::from_le_bytes(slice[16..20].try_into().unwrap());
+        let serial_number = u32::from_be_bytes(slice[0..4].try_into().unwrap());
+        let refresh = u32::from_be_bytes(slice[4..8].try_into().unwrap());
+        let retry = u32::from_be_bytes(slice[8..12].try_into().unwrap());
+        let expire = u32::from_be_bytes(slice[12..16].try_into().unwrap());
+        let minimum_ttl = u32::from_be_bytes(slice[16..20].try_into().unwrap());
 
         let mut index = 20;
         let primary_server = parse_ms_dns_name(slice, &mut index)?;
@@ -1674,6 +1672,12 @@ fn parse_ms_dns_name(slice: &[u8], index: &mut usize) -> Result<String, enc::Err
         fqdn.push_str(&label_string);
         fqdn.push('.');
     }
+
+    // skip the trailing zero byte
+    if *index + 1 > slice.len() {
+        return Err(enc::Error::WrongLength);
+    }
+    *index += 1;
 
     Ok(fqdn)
 }

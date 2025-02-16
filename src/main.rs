@@ -131,9 +131,13 @@ async fn dump_zone(ldap: &mut Ldap, file_name: &Path, zone_dn: &str) {
         for record in entry_records {
             let dns_record = DnsRecord::try_decode(record)
                 .expect("failed to decode a DNS record");
+            if dns_record.data.record_type().to_base_type() == 0x0000 {
+                continue;
+            }
             write!(file, "{} ", entry_name).unwrap();
             dns_record.try_encode(&SupportsEverythingEncoder, &mut ByteWriteAdapter(&mut file))
                 .expect("failed to write out a DNS record");
+            writeln!(file).unwrap();
         }
     }
 }
