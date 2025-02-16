@@ -1,13 +1,18 @@
 mod args;
+mod enc;
 mod record;
 
 
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use ldap3::{Ldap, LdapConnAsync, Scope, SearchEntry};
 
-use crate::args::{Credentials, Opts};
+use crate::args::{Credentials, Mode};
+use crate::enc::{ByteWriteAdapter, MsDecodable, SupportsEverythingEncoder, ZoneEncodable};
+use crate::record::DnsRecord;
 
 
 fn get_required_single_string_value(entry: &SearchEntry, key: &str) -> String {
@@ -109,7 +114,13 @@ async fn dump_zone(ldap: &mut Ldap, file_name: &Path, zone_dn: &str) {
             return;
         },
     };
-    //let mut entries = Vec::with_capacity(entries_entries.len());
+
+    let file_name_parent = file_name.parent().unwrap();
+    std::fs::create_dir_all(file_name_parent)
+        .expect("failed to create directory for zone file");
+    let mut file = File::create(file_name)
+        .expect("failed to open zone file");
+
     for entry_raw_entry in entries_entries {
         let entry_entry = SearchEntry::construct(entry_raw_entry);
         let entry_name = get_required_single_string_value(
@@ -117,47 +128,57 @@ async fn dump_zone(ldap: &mut Ldap, file_name: &Path, zone_dn: &str) {
         );
         let Some(entry_records) = entry_entry.bin_attrs.get("dnsRecord")
             else { continue };
-        println!("{}: {}: {}", zone_dn, entry_name, entry_records.len());
+        for record in entry_records {
+            let dns_record = DnsRecord::try_decode(record)
+                .expect("failed to decode a DNS record");
+            write!(file, "{} ", entry_name).unwrap();
+            dns_record.try_encode(&SupportsEverythingEncoder, &mut ByteWriteAdapter(&mut file))
+                .expect("failed to write out a DNS record");
+        }
     }
 }
 
-
 async fn run() {
-    let opts = Opts::parse();
+    let mode = Mode::parse();
 
-    // connect to LDAP
-    let (conn, mut ldap) = LdapConnAsync::new(&opts.ldap_uri)
-        .await.expect("failed to connect to LDAP server");
-    ldap3::drive!(conn);
+    match mode {
+        Mode::Query(opts) => {
+            // connect to LDAP
+            let (conn, mut ldap) = LdapConnAsync::new(&opts.ldap_uri)
+                .await.expect("failed to connect to LDAP server");
+            ldap3::drive!(conn);
 
-    // obtain credentials
-    let (bind_dn, password) = if let Some(bind_dn) = opts.bind_dn {
-        let password = rpassword::prompt_password("LDAP password: ")
-            .expect("failed to read LDAP password");
-        (bind_dn, password)
-    } else if let Some(credentials_file) = opts.credentials_file {
-        let credentials_string = std::fs::read_to_string(credentials_file)
-            .expect("failed to read credentials file");
-        let credentials: Credentials = toml::from_str(&credentials_string)
-            .expect("failed to parse credentials file");
-        (credentials.bind_dn, credentials.password)
-    } else {
-        unreachable!();
-    };
+            // obtain credentials
+            let (bind_dn, password) = if let Some(bind_dn) = opts.bind_dn {
+                let password = rpassword::prompt_password("LDAP password: ")
+                    .expect("failed to read LDAP password");
+                (bind_dn, password)
+            } else if let Some(credentials_file) = opts.credentials_file {
+                let credentials_string = std::fs::read_to_string(credentials_file)
+                    .expect("failed to read credentials file");
+                let credentials: Credentials = toml::from_str(&credentials_string)
+                    .expect("failed to parse credentials file");
+                (credentials.bind_dn, credentials.password)
+            } else {
+                unreachable!();
+            };
 
-    // bind
-    ldap.simple_bind(&bind_dn, &password)
-        .await.expect("failed to login (bind) on LDAP server");
+            // bind
+            ldap.simple_bind(&bind_dn, &password)
+                .await.expect("failed to login (bind) on LDAP server");
 
-    let naming_context = get_default_naming_context(&mut ldap).await;
+            let naming_context = get_default_naming_context(&mut ldap).await;
 
-    let subdirs_and_dns_objects = [
-        ("system", format!("CN=MicrosoftDNS,CN=System,{}", naming_context)),
-        ("forest", format!("CN=MicrosoftDNS,DC=ForestDnsZones,{}", naming_context)),
-        ("domain", format!("CN=MicrosoftDNS,DC=DomainDnsZones,{}", naming_context)),
-    ];
-    for (subdir_name, dns_config_dn) in &subdirs_and_dns_objects {
-        dump_zones(&mut ldap, subdir_name, dns_config_dn).await;
+            let subdirs_and_dns_objects = [
+                ("system", format!("CN=MicrosoftDNS,CN=System,{}", naming_context)),
+                ("forest", format!("CN=MicrosoftDNS,DC=ForestDnsZones,{}", naming_context)),
+                ("domain", format!("CN=MicrosoftDNS,DC=DomainDnsZones,{}", naming_context)),
+            ];
+            for (subdir_name, dns_config_dn) in &subdirs_and_dns_objects {
+                dump_zones(&mut ldap, subdir_name, dns_config_dn).await;
+            }
+        },
+        Mode::Decode(_) => panic!("decode mode is a work in progress ;-)"),
     }
 }
 

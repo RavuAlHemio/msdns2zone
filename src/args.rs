@@ -5,7 +5,16 @@ use serde::{Deserialize, Serialize};
 
 
 #[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
-pub struct Opts {
+pub enum Mode {
+    /// Query an LDAP server for Microsoft DNS entries.
+    Query(QueryOpts),
+
+    /// Decode an LDIF export from an LDAP server with Microsoft DNS entries.
+    Decode(DecodeOpts),
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
+pub struct QueryOpts {
     #[arg(short = 'H', long)]
     pub ldap_uri: String,
 
@@ -20,4 +29,9 @@ pub struct Opts {
 pub struct Credentials {
     pub bind_dn: String,
     pub password: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
+pub struct DecodeOpts {
+    // TODO ;-)
 }
