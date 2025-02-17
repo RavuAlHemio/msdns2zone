@@ -559,6 +559,15 @@ impl enc::ZoneEncodable for AtmAddressData {
                 }
                 Ok(())
             },
+            2 => {
+                // Windows DNS erroneously encodes AESA with type byte 2 instead of 0;
+                // dump this in the arbitrary-bytes format
+                write!(writer, "\\# {} {:02x}", 1 + self.data.len(), self.format)?;
+                for b in &self.data {
+                    write!(writer, "{:02x}", b)?;
+                }
+                Ok(())
+            },
             _ => Err(enc::Error::Unencodable),
         }
     }
