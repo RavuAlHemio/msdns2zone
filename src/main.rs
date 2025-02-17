@@ -1,6 +1,8 @@
 mod args;
 mod enc;
+mod ldif;
 mod record;
+mod tiny_directory;
 
 
 use std::fs::File;
