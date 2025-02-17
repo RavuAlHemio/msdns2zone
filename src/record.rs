@@ -1096,34 +1096,25 @@ impl enc::WireEncodable for NamingAuthorityPointerData {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NextDomainData {
+// theoretically (RPC format):
     // bitmap_word_count: u16
-    pub bitmap: Vec<u8>, // [u16; bitmap_word_count]
+    // bitmap: [u16; bitmap_word_count]
+// name: String, // name
+    //
+    // in practice (MS DNS structure):
+    pub bitmap: [u8; 16],
     pub name: String, // name
 }
 impl enc::MsDecodable for NextDomainData {
     fn try_decode(slice: &[u8]) -> Result<Self, enc::Error> {
-        if slice.len() < 2 {
+        if slice.len() < 16 {
             return Err(enc::Error::WrongLength);
         }
-        let bitmap_word_count: usize = u16::from_le_bytes(slice[0..2].try_into().unwrap()).into();
-        let bitmap_byte_count = 2 * bitmap_word_count;
+        
+        let mut bitmap = [0u8; 16];
+        bitmap.copy_from_slice(&slice[0..16]);
 
-        if 2 + bitmap_byte_count > slice.len() {
-            return Err(enc::Error::WrongLength);
-        }
-
-        let mut index = 2;
-        let mut bitmap = Vec::with_capacity(bitmap_byte_count);
-        for _ in 0..bitmap_word_count {
-            bitmap.push(slice[index]);
-            bitmap.push(slice[index+1]);
-            index += 2;
-        }
-
-        while bitmap.ends_with(&[0x00]) {
-            bitmap.pop();
-        }
-
+        let mut index = 16;
         let name = parse_ms_dns_name(slice, &mut index)?;
 
         if index < slice.len() {
