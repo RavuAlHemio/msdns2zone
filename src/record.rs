@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::fmt;
+use std::fmt::{self, Write};
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
@@ -1096,10 +1096,10 @@ impl enc::WireEncodable for NamingAuthorityPointerData {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NextDomainData {
-// theoretically (RPC format):
+    // theoretically (RPC format):
     // bitmap_word_count: u16
     // bitmap: [u16; bitmap_word_count]
-// name: String, // name
+    // name: String, // name
     //
     // in practice (MS DNS structure):
     pub bitmap: [u8; 16],
@@ -1110,7 +1110,7 @@ impl enc::MsDecodable for NextDomainData {
         if slice.len() < 16 {
             return Err(enc::Error::WrongLength);
         }
-        
+
         let mut bitmap = [0u8; 16];
         bitmap.copy_from_slice(&slice[0..16]);
 
@@ -1672,10 +1672,16 @@ fn parse_ms_dns_name(slice: &[u8], index: &mut usize) -> Result<String, enc::Err
         *index += label_length;
         let label_str = std::str::from_utf8(label_slice)
             .map_err(|_| enc::Error::InvalidData)?;
-        let label_string = label_str
-            .replace("\\", "\\\\")
-            .replace(".", "\\.");
-        fqdn.push_str(&label_string);
+        for c in label_str.chars() {
+            match c {
+                control if (control as u32) < 0x20 => {
+                    // control character; octal escape
+                    write!(fqdn, "\\{:03o}", control as u32)?;
+                },
+                '\\'|'.'|'"' => write!(fqdn, "\\{}", c)?,
+                other => write!(fqdn, "{}", other)?,
+            }
+        }
         fqdn.push('.');
     }
 
@@ -1692,8 +1698,11 @@ fn write_zone_quoted_string<W: fmt::Write>(string: &str, writer: &mut W) -> Resu
     write!(writer, "\"")?;
     for c in string.chars() {
         match c {
-            '\\' => write!(writer, "\\\\")?,
-            '"' => write!(writer, "\\\"")?,
+            control if (control as u32) < 0x20 => {
+                // control character; octal escape
+                write!(writer, "\\{:03o}", control as u32)?;
+            },
+            '\\'|'"' => write!(writer, "\\{}", c)?,
             other => write!(writer, "{}", other)?,
         }
     }
