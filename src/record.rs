@@ -829,7 +829,7 @@ impl enc::MsDecodable for DelegationSignerData {
         if slice.len() < 5 {
             return Err(enc::Error::WrongLength);
         }
-        let key_tag = u16::from_le_bytes(slice[0..2].try_into().unwrap());
+        let key_tag = u16::from_be_bytes(slice[0..2].try_into().unwrap());
         let algorithm = slice[2];
         let digest_type = slice[3];
         let digest = slice[4..].to_vec();
@@ -993,7 +993,7 @@ impl enc::MsDecodable for NameAndPreferenceData {
         if slice.len() < 2 {
             return Err(enc::Error::WrongLength);
         }
-        let preference = u16::from_le_bytes(slice[0..2].try_into().unwrap());
+        let preference = u16::from_be_bytes(slice[0..2].try_into().unwrap());
         let mut index = 2;
         let name = parse_ms_dns_name(slice, &mut index)?;
         if index < slice.len() {
@@ -1037,8 +1037,8 @@ impl enc::MsDecodable for NamingAuthorityPointerData {
         if slice.len() < 4 {
             return Err(enc::Error::WrongLength);
         }
-        let order = u16::from_le_bytes(slice[0..2].try_into().unwrap());
-        let preference = u16::from_le_bytes(slice[2..4].try_into().unwrap());
+        let order = u16::from_be_bytes(slice[0..2].try_into().unwrap());
+        let preference = u16::from_be_bytes(slice[2..4].try_into().unwrap());
         let mut index = 4;
         let flags = parse_string(slice, &mut index)?;
         let services = parse_string(slice, &mut index)?;
@@ -1185,7 +1185,7 @@ impl enc::MsDecodable for PublicKeyData {
             return Err(enc::Error::WrongLength);
         }
 
-        let flags = u16::from_le_bytes(slice[0..2].try_into().unwrap());
+        let flags = u16::from_be_bytes(slice[0..2].try_into().unwrap());
         let protocol = slice[2];
         let algorithm = slice[3];
         let key = slice[4..].to_vec();
@@ -1289,13 +1289,13 @@ impl enc::MsDecodable for SignatureData {
             return Err(enc::Error::WrongLength);
         }
 
-        let type_covered = u16::from_le_bytes(slice[0..2].try_into().unwrap());
+        let type_covered = u16::from_be_bytes(slice[0..2].try_into().unwrap());
         let algorithm = slice[2];
         let labels = slice[3];
-        let original_ttl = u32::from_le_bytes(slice[4..8].try_into().unwrap());
-        let signature_expiration = u32::from_le_bytes(slice[8..12].try_into().unwrap());
-        let signature_inception = u32::from_le_bytes(slice[12..16].try_into().unwrap());
-        let key_tag = u16::from_le_bytes(slice[16..18].try_into().unwrap());
+        let original_ttl = u32::from_be_bytes(slice[4..8].try_into().unwrap());
+        let signature_expiration = u32::from_be_bytes(slice[8..12].try_into().unwrap());
+        let signature_inception = u32::from_be_bytes(slice[12..16].try_into().unwrap());
+        let key_tag = u16::from_be_bytes(slice[16..18].try_into().unwrap());
 
         let mut index = 18;
         let name_signer = parse_ms_dns_name(slice, &mut index)?;
@@ -1493,7 +1493,13 @@ impl enc::MsDecodable for WellKnownServiceData {
         }
         let address = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
         let protocol = slice[4];
-        let bitmap = slice[5..].to_vec();
+
+        let mut bitmap = slice[5..].to_vec();
+
+        // bytes are in the correct order but the bits within them aren't
+        for b in &mut bitmap {
+            *b = b.reverse_bits();
+        }
 
         Ok(Self {
             address,
