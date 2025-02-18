@@ -14,7 +14,9 @@ use ldap3::{Ldap, LdapConnAsync, Scope, SearchEntry};
 
 use crate::args::{Credentials, Mode};
 use crate::enc::{ByteWriteAdapter, MsDecodable, SupportsEverythingEncoder, ZoneEncodable};
+use crate::ldif::parse_ldif;
 use crate::record::DnsRecord;
+use crate::tiny_directory::directorify;
 
 
 fn get_required_single_string_value(entry: &SearchEntry, key: &str) -> String {
@@ -184,7 +186,14 @@ async fn run() {
                 dump_zones(&mut ldap, subdir_name, dns_config_dn).await;
             }
         },
-        Mode::Decode(_) => panic!("decode mode is a work in progress ;-)"),
+        Mode::Decode(opts) => {
+            let ldif_string = std::fs::read_to_string(&opts.ldif_path)
+                .expect("failed to load LDIF file");
+            let entries = parse_ldif(&ldif_string);
+            let directory = directorify(&entries);
+            println!("{:#?}", directory);
+            // still a work in progress :-)
+        },
     }
 }
 

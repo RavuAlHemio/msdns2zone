@@ -33,5 +33,6 @@ pub struct Credentials {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
 pub struct DecodeOpts {
-    // TODO ;-)
+    #[arg(short = 'l', long)]
+    pub ldif_path: PathBuf,
 }

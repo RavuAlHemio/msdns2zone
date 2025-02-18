@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use base64::Engine;
 
@@ -29,6 +29,7 @@ fn strip_comments<'a>(ldif: &'a str) -> Cow<'a, str> {
         for ln in ldif.split('\n') {
             if ln.starts_with('#') {
                 // skip
+                continue;
             }
 
             if first_line {
@@ -64,16 +65,17 @@ fn cut_str_to_max(s: &str, mut max_bytes: usize) -> &str {
 }
 
 
-fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
+pub fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
     // normalize LDIF
     let normalized = normalize_newlines(ldif);
     let joined = join_continuations(&*normalized);
     let stripped = strip_comments(&*joined);
     let compressed = compress_newlines(&*stripped);
+    let trimmed = compressed.trim_matches('\n');
 
     // each record is now separated by "\n\n"
     let mut records: Vec<AttributeBag> = Vec::new();
-    for record in compressed.split("\n\n") {
+    for record in trimmed.split("\n\n") {
         let mut key_to_values = AttributeBag::new();
 
         // and each attribute in the record by "\n"
@@ -84,11 +86,15 @@ fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
                 continue;
             };
 
+            // split_once eats the delimiter
+
             // how many colons?
-            let value = if rest == ":" {
+            let value = if rest.len() == 0 {
+                // line ends with ":"
                 // empty value
                 Vec::with_capacity(0)
-            } else if let Some(mut base64_str) = rest.strip_prefix(":: ") {
+            } else if let Some(mut base64_str) = rest.strip_prefix(": ") {
+                // line contains ":: "
                 // base64
                 // strip off additional spaces
                 base64_str = base64_str.trim_matches(' ');
@@ -106,14 +112,15 @@ fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
                     },
                 };
                 decoded
-            } else if let Some(mut plain_str) = rest.strip_prefix(": ") {
+            } else if let Some(mut plain_str) = rest.strip_prefix(" ") {
+                // line contains ": "
                 // plain
                 // strip off additional spaces
                 plain_str = plain_str.trim_matches(' ');
 
                 plain_str.as_bytes().to_vec()
             } else {
-                eprintln!("skipping LDIF line with unexpected delimiter: {:?}", record);
+                eprintln!("skipping LDIF line {:?} with unexpected delimiter", record);
                 continue;
             };
 
@@ -125,6 +132,7 @@ fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
 
         if !key_to_values.contains_key("dn") {
             eprintln!("skipping LDIF record missing required \"dn\" pseudo-attribute: {:?}", key_to_values);
+            continue;
         }
 
         records.push(key_to_values);

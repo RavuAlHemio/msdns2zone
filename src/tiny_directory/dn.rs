@@ -20,10 +20,10 @@ pub fn dn_to_rdns(dn: &str) -> Option<Vec<Rdn>> {
     }
 
     let tokens = tokenize(dn)?;
-
     let pieces = split_at_unescaped_commas(&tokens);
+
     let mut rdns = Vec::with_capacity(pieces.len());
-    for piece in pieces {
+    for piece in &pieces {
         let (key_tokens, value_tokens) = split_at_first_unescaped_equals(&piece)?;
         let key_bytes = tokens_to_bytes(&key_tokens);
         let rear_bytes = tokens_to_bytes(&value_tokens);
@@ -96,6 +96,9 @@ fn tokenize(dn: &str) -> Option<Vec<Token>> {
 
                     // continue after the second hex digit
                     current_start = next_backslash + 3;
+                } else {
+                    // some other character -- not allowed
+                    return None;
                 }
             },
         }
@@ -116,7 +119,7 @@ fn split_at_unescaped_commas<'a>(tokens: &[Token<'a>]) -> Vec<Vec<Token<'a>>> {
     let mut current_piece = Vec::new();
     for token in tokens {
         match token {
-            Token::EscapedByte(b) => {
+            Token::EscapedByte(_) => {
                 current_piece.push(token.clone());
             },
             Token::UnescapedSlice(s) => {
@@ -154,7 +157,7 @@ fn split_at_first_unescaped_equals<'a>(tokens: &[Token<'a>]) -> Option<(Vec<Toke
     let mut front_pieces = Vec::new();
     for (i, token) in tokens.into_iter().enumerate() {
         match token {
-            Token::EscapedByte(b) => {
+            Token::EscapedByte(_) => {
                 front_pieces.push(token.clone());
             },
             Token::UnescapedSlice(s) => {
@@ -179,7 +182,7 @@ fn split_at_first_unescaped_equals<'a>(tokens: &[Token<'a>]) -> Option<(Vec<Toke
                         if after.len() > 0 {
                             rear_pieces.push(Token::UnescapedSlice(after));
                         }
-                        for rest_piece in tokens.into_iter().skip(i) {
+                        for rest_piece in tokens.into_iter().skip(i + 1) {
                             rear_pieces.push(rest_piece.clone());
                         }
 
@@ -218,5 +221,50 @@ mod tests {
         assert_eq!(rdns.len(), 1);
         assert_eq!(rdns[0].key, "C");
         assert_eq!(rdns[0].value, b"QQ");
+
+        let rdns = dn_to_rdns("O=Dewey LLC,C=QQ").unwrap();
+        assert_eq!(rdns.len(), 2);
+        assert_eq!(rdns[0].key, "O");
+        assert_eq!(rdns[0].value, b"Dewey LLC");
+        assert_eq!(rdns[1].key, "C");
+        assert_eq!(rdns[1].value, b"QQ");
+
+        let rdns = dn_to_rdns("O=Dewey\\, Cheatham and Howe LLC,C=QQ").unwrap();
+        assert_eq!(rdns.len(), 2);
+        assert_eq!(rdns[0].key, "O");
+        assert_eq!(rdns[0].value, b"Dewey, Cheatham and Howe LLC");
+        assert_eq!(rdns[1].key, "C");
+        assert_eq!(rdns[1].value, b"QQ");
+
+        let rdns = dn_to_rdns("givenName=Ond\\C5\\99ej,SN=Ho\\C5\\A1ek,C=QQ").unwrap();
+        assert_eq!(rdns.len(), 3);
+        assert_eq!(rdns[0].key, "givenName");
+        assert_eq!(rdns[0].value, "Ond\u{0159}ej".as_bytes());
+        assert_eq!(rdns[1].key, "SN");
+        assert_eq!(rdns[1].value, "Ho\u{0161}ek".as_bytes());
+        assert_eq!(rdns[2].key, "C");
+        assert_eq!(rdns[2].value, b"QQ");
+
+        let rdns = dn_to_rdns("one=two=three").unwrap();
+        assert_eq!(rdns.len(), 1);
+        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].value, b"two=three");
+
+        let rdns = dn_to_rdns("one=,two=").unwrap();
+        assert_eq!(rdns.len(), 2);
+        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].value, b"");
+        assert_eq!(rdns[1].key, "two");
+        assert_eq!(rdns[1].value, b"");
+
+        let rdns = dn_to_rdns("one=\\\"").unwrap();
+        assert_eq!(rdns.len(), 1);
+        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].value, b"\"");
+
+        assert_eq!(dn_to_rdns("one=\\"), None);
+        assert_eq!(dn_to_rdns("one=\\Z"), None);
+        assert_eq!(dn_to_rdns("one=\\A"), None);
+        assert_eq!(dn_to_rdns("one=\\AZ"), None);
     }
 }
