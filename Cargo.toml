@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = { version = "0.1" }
 base32 = { version = "0.5" }
 base64 = { version = "0.22" }
 from-to-repr = { version = "0.2", features = ["from_to_other"] }

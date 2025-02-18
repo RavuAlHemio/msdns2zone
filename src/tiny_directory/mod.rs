@@ -3,6 +3,9 @@ pub mod dn;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use async_trait::async_trait;
+
+use crate::directory::{Directory, DirectoryEntry};
 use crate::tiny_directory::dn::{dn_to_rdns, Rdn};
 
 
@@ -76,4 +79,47 @@ pub fn directorify(attribute_bags: &[AttributeBag]) -> Object {
     }
 
     root_object
+}
+
+
+#[async_trait]
+impl Directory for Object {
+    async fn find_children<S: AsRef<str> + Sync>(&mut self, base_dn: &str, object_class: &str, attribute_names: &[S]) -> Option<Vec<DirectoryEntry>> {
+        let base_dn_rdns = dn_to_rdns(base_dn)?;
+        let object_class_lower = object_class.to_lowercase();
+
+        // descend through the directory tree
+        let mut current_node = self;
+        for rdn in &base_dn_rdns {
+            let requested_child = match current_node.children.get_mut(rdn) {
+                Some(rc) => rc,
+                None => {
+                    if let Ok(rdn_value_text) = std::str::from_utf8(&rdn.value) {
+                        eprintln!("requested child {}={} not found", rdn.key, rdn_value_text);
+                    } else {
+                        eprintln!("requested child {}={:?}", rdn.key, rdn.value);
+                    }
+                    return None;
+                },
+            };
+            current_node = requested_child;
+        }
+
+        for (rdn, child) in &current_node.children {
+            let Some(child_object_classes_bin) = child.attributes.get("objectClass")
+                else { continue };
+            let child_object_classes_str: Vec<&str> = child_object_classes_bin.iter()
+                .filter_map(|cocb| std::str::from_utf8(cocb).ok())
+                .collect();
+            if !child_object_classes_str.iter().any(|cocs| cocs.to_lowercase() == object_class_lower) {
+                // this child is not relevant for us
+                continue;
+            }
+
+            let child_dn = format!("{},{}", rdn, base_dn);
+            todo!();
+        }
+
+        todo!();
+    }
 }

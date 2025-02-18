@@ -1,5 +1,7 @@
 mod args;
+mod directory;
 mod enc;
+mod ldap;
 mod ldif;
 mod record;
 mod tiny_directory;

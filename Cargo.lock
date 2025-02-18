@@ -642,6 +642,7 @@ dependencies = [
 name = "msdns2zone"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base32",
  "base64",
  "clap",

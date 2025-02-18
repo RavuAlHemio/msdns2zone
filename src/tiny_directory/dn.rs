@@ -1,3 +1,9 @@
+use std::fmt;
+
+
+const ESCAPABLE_CHARACTERS_SORTED: [char; 10] = [' ', '"', '#', '+', ',', ';', '<', '=', '>', '\\'];
+
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Rdn {
     pub key: String,
@@ -9,6 +15,11 @@ impl Rdn {
             key,
             value,
         }
+    }
+}
+impl fmt::Display for Rdn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
     }
 }
 
@@ -71,7 +82,7 @@ fn tokenize(dn: &str) -> Option<Vec<Token>> {
                 return None;
             },
             Some(c) => {
-                if [' ', '"', '#', '+', ',', ';', '<', '=', '>', '\\'].binary_search(&c).is_ok() {
+                if ESCAPABLE_CHARACTERS_SORTED.binary_search(&c).is_ok() {
                     tokens.push(Token::EscapedByte((c as u32).try_into().unwrap()));
 
                     // continue after that escaped character
