@@ -2,6 +2,7 @@ use std::fmt;
 
 
 const ESCAPABLE_CHARACTERS_SORTED: [char; 10] = [' ', '"', '#', '+', ',', ';', '<', '=', '>', '\\'];
+const ALWAYS_ESCAPE_BYTES_SORTED: [u8; 7] = [b'"', b'+', b',', b';', b'<', b'>', b'\\'];
 
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -19,7 +20,22 @@ impl Rdn {
 }
 impl fmt::Display for Rdn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        write!(f, "{}=", self.key)?;
+        for (i, &b) in self.value.iter().enumerate() {
+            let self_escape =
+                ALWAYS_ESCAPE_BYTES_SORTED.binary_search(&b).is_ok()
+                || (i == 0 && (b == b' ' || b == b'#'))
+                || (i == self.value.len() - 1 && b == b' ')
+            ;
+            if self_escape {
+                write!(f, "\\{}", char::from_u32(b as u32).unwrap())?;
+            } else if b >= 0x20 && b <= 0x7E {
+                write!(f, "{}", char::from_u32(b as u32).unwrap())?;
+            } else {
+                write!(f, "\\{:02X}", b)?;
+            }
+        }
+        Ok(())
     }
 }
 
