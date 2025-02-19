@@ -1,5 +1,7 @@
 use std::fmt;
 
+use unicase::UniCase;
+
 
 const ESCAPABLE_CHARACTERS_SORTED: [char; 10] = [' ', '"', '#', '+', ',', ';', '<', '=', '>', '\\'];
 const ALWAYS_ESCAPE_BYTES_SORTED: [u8; 7] = [b'"', b'+', b',', b';', b'<', b'>', b'\\'];
@@ -7,13 +9,13 @@ const ALWAYS_ESCAPE_BYTES_SORTED: [u8; 7] = [b'"', b'+', b',', b';', b'<', b'>',
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Rdn {
-    pub key: String,
+    pub key: UniCase<String>,
     pub value: Vec<u8>,
 }
 impl Rdn {
     pub fn new(key: String, value: Vec<u8>) -> Self {
         Self {
-            key,
+            key: UniCase::new(key),
             value,
         }
     }
@@ -237,7 +239,12 @@ fn tokens_to_bytes(tokens: &[Token]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use unicase::UniCase;
     use super::dn_to_rdns;
+
+    fn uc(s: &str) -> UniCase<&str> {
+        UniCase::new(s)
+    }
 
     #[test]
     fn test_dn_to_rdns() {
@@ -246,47 +253,47 @@ mod tests {
 
         let rdns = dn_to_rdns("C=QQ").unwrap();
         assert_eq!(rdns.len(), 1);
-        assert_eq!(rdns[0].key, "C");
+        assert_eq!(rdns[0].key, uc("C"));
         assert_eq!(rdns[0].value, b"QQ");
 
         let rdns = dn_to_rdns("O=Dewey LLC,C=QQ").unwrap();
         assert_eq!(rdns.len(), 2);
-        assert_eq!(rdns[0].key, "O");
+        assert_eq!(rdns[0].key, uc("O"));
         assert_eq!(rdns[0].value, b"Dewey LLC");
-        assert_eq!(rdns[1].key, "C");
+        assert_eq!(rdns[1].key, uc("C"));
         assert_eq!(rdns[1].value, b"QQ");
 
         let rdns = dn_to_rdns("O=Dewey\\, Cheatham and Howe LLC,C=QQ").unwrap();
         assert_eq!(rdns.len(), 2);
-        assert_eq!(rdns[0].key, "O");
+        assert_eq!(rdns[0].key, uc("O"));
         assert_eq!(rdns[0].value, b"Dewey, Cheatham and Howe LLC");
-        assert_eq!(rdns[1].key, "C");
+        assert_eq!(rdns[1].key, uc("C"));
         assert_eq!(rdns[1].value, b"QQ");
 
         let rdns = dn_to_rdns("givenName=Ond\\C5\\99ej,SN=Ho\\C5\\A1ek,C=QQ").unwrap();
         assert_eq!(rdns.len(), 3);
-        assert_eq!(rdns[0].key, "givenName");
+        assert_eq!(rdns[0].key, uc("givenName"));
         assert_eq!(rdns[0].value, "Ond\u{0159}ej".as_bytes());
-        assert_eq!(rdns[1].key, "SN");
+        assert_eq!(rdns[1].key, uc("SN"));
         assert_eq!(rdns[1].value, "Ho\u{0161}ek".as_bytes());
-        assert_eq!(rdns[2].key, "C");
+        assert_eq!(rdns[2].key, uc("C"));
         assert_eq!(rdns[2].value, b"QQ");
 
         let rdns = dn_to_rdns("one=two=three").unwrap();
         assert_eq!(rdns.len(), 1);
-        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].key, uc("one"));
         assert_eq!(rdns[0].value, b"two=three");
 
         let rdns = dn_to_rdns("one=,two=").unwrap();
         assert_eq!(rdns.len(), 2);
-        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].key, uc("one"));
         assert_eq!(rdns[0].value, b"");
-        assert_eq!(rdns[1].key, "two");
+        assert_eq!(rdns[1].key, uc("two"));
         assert_eq!(rdns[1].value, b"");
 
         let rdns = dn_to_rdns("one=\\\"").unwrap();
         assert_eq!(rdns.len(), 1);
-        assert_eq!(rdns[0].key, "one");
+        assert_eq!(rdns[0].key, uc("one"));
         assert_eq!(rdns[0].value, b"\"");
 
         assert_eq!(dn_to_rdns("one=\\"), None);
