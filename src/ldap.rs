@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use ldap3::{Scope, SearchEntry};
+use unicase::UniCase;
 
 use crate::directory::{Directory, DirectoryEntry};
 
@@ -10,9 +11,12 @@ use crate::directory::{Directory, DirectoryEntry};
 pub struct LdapConnection {
     ldap: ldap3::Ldap,
 }
+impl LdapConnection {
+    pub fn new(ldap: ldap3::Ldap) -> Self { Self { ldap } }
+}
 #[async_trait]
 impl Directory for LdapConnection {
-    async fn find_children<S: AsRef<str> + Sync>(&mut self, base_dn: &str, object_class: &str, attribute_names: &[S]) -> Option<Vec<DirectoryEntry>> {
+    async fn find_children(&mut self, base_dn: &str, object_class: &str, attribute_names: &[UniCase<String>]) -> Option<Vec<DirectoryEntry>> {
         let filter = format!("(objectClass={})", object_class);
         let ldap_attribute_names: Vec<&str> = attribute_names
             .into_iter()
@@ -44,7 +48,7 @@ impl Directory for LdapConnection {
             let mut attributes = BTreeMap::new();
             for (key, string_values) in search_entry.attrs {
                 let all_values = attributes
-                    .entry(key)
+                    .entry(UniCase::new(key))
                     .or_insert_with(|| BTreeSet::new());
                 for string_value in string_values {
                     all_values.insert(string_value.into_bytes());
@@ -52,14 +56,14 @@ impl Directory for LdapConnection {
             }
             for (key, bytes_values) in search_entry.bin_attrs {
                 let all_values = attributes
-                    .entry(key)
+                    .entry(UniCase::new(key))
                     .or_insert_with(|| BTreeSet::new());
                 for bytes_value in bytes_values {
                     all_values.insert(bytes_value);
                 }
             }
             let entry = DirectoryEntry {
-                dn: search_entry.dn,
+                dn: UniCase::new(search_entry.dn),
                 attributes,
             };
             entries.push(entry);

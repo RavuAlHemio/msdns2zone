@@ -10,30 +10,72 @@ mod tiny_directory;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use clap::Parser;
+use ldap::LdapConnection;
 use ldap3::{Ldap, LdapConnAsync, Scope, SearchEntry};
+use unicase::UniCase;
 
 use crate::args::{Credentials, Mode};
+use crate::directory::{Directory, DirectoryEntry};
 use crate::enc::{ByteWriteAdapter, MsDecodable, SupportsEverythingEncoder, ZoneEncodable};
 use crate::ldif::parse_ldif;
 use crate::record::DnsRecord;
-use crate::tiny_directory::directorify;
+use crate::tiny_directory::{directorify, DirectoryWrapper};
+use crate::tiny_directory::dn::{dn_to_rdns, MaybeUniCaseString};
 
 
-fn get_required_single_string_value(entry: &SearchEntry, key: &str) -> String {
-    if entry.bin_attrs.contains_key(key) {
-        panic!("{} on {} is a binary value?!", key, entry.dn);
+macro_rules! define_attribute {
+    ($name:ident, $value:expr) => {
+        static $name: LazyLock<UniCase<String>> = LazyLock::new(|| UniCase::new(String::from(
+            $value
+        )));
     }
-    let values = match entry.attrs.get(key) {
+}
+
+macro_rules! define_attribute_list {
+    ($name:ident $(, $values:expr)+ $(,)?) => {
+        static $name: LazyLock<Vec<UniCase<String>>> = LazyLock::new(|| vec![
+            $(UniCase::new($values.to_owned()),)+
+        ]);
+    }
+}
+
+macro_rules! define_mucs {
+    ($name:ident, $value:expr) => {
+        static $name: LazyLock<MaybeUniCaseString> = LazyLock::new(|| MaybeUniCaseString::from(
+            $value
+        ));
+    }
+}
+
+define_attribute!(ATTRIBUTE_CN, "cn");
+define_attribute!(ATTRIBUTE_DC, "dc");
+define_attribute!(ATTRIBUTE_DNS_RECORD, "dnsRecord");
+define_attribute!(ATTRIBUTE_NAME, "name");
+define_attribute_list!(ATTRIBUTES_NAME, "name");
+define_attribute_list!(ATTRIBUTES_NAME_DNSRECORD, "name", "dnsRecord");
+define_mucs!(MUCS_DOMAIN_DNS_ZONES, "DomainDnsZones");
+define_mucs!(MUCS_FOREST_DNS_ZONES, "ForestDnsZones");
+define_mucs!(MUCS_MICROSOFTDNS, "MicrosoftDNS");
+define_mucs!(MUCS_SYSTEM, "System");
+
+
+fn get_required_single_string_value(entry: &DirectoryEntry, key: &UniCase<String>) -> String {
+    let values = match entry.attributes.get(key) {
         Some(v) => v,
         None => panic!("{} is not set on {}", key, entry.dn),
     };
-    let value = match values.get(0) {
+    let value_bytes = match values.first() {
         Some(v) => v,
         None => panic!("{} on {} has no values?!", key, entry.dn),
     };
-    value.clone()
+    let value = match String::from_utf8(value_bytes.clone()) {
+        Ok(v) => v,
+        Err(_) => panic!("{} on {} is binary?! {:?}", key, entry.dn, value_bytes),
+    };
+    value
 }
 
 
@@ -49,43 +91,32 @@ async fn get_default_naming_context(ldap: &mut Ldap) -> String {
         .success().expect("querying RootDSE on LDAP server failed");
     for rootdse_raw_entry in rootdse_entries {
         let rootdse_entry = SearchEntry::construct(rootdse_raw_entry);
-        let this_naming_context = get_required_single_string_value(
-            &rootdse_entry, "defaultNamingContext",
-        );
-        naming_context = Some(this_naming_context);
+        if rootdse_entry.bin_attrs.contains_key("defaultNamingContext") {
+            panic!("defaultNamingContext on RootDSE is binary?!");
+        }
+        let dnc = rootdse_entry.attrs
+            .get("defaultNamingContext").expect("defaultNamingContext not found")
+            .get(0)
+            .expect("defaultNamingContext has no values");
+        naming_context = Some(dnc.clone());
     }
     naming_context
         .expect("rootDSE is missing defaultNamingContext")
 }
 
 
-async fn dump_zones(ldap: &mut Ldap, subdir_name: &str, dns_config_dn: &str) {
+async fn dump_zones<D: Directory>(directory: &mut D, subdir_name: &str, dns_config_dn: &str) {
     // enumerate zones
-    let zone_result = ldap.search(
+    let Some(zone_entries) = directory.find_children(
         dns_config_dn,
-        Scope::OneLevel,
-        "(objectClass=dnsZone)",
-        vec!["name"],
-    ).await;
-    let zone_response = match zone_result {
-        Ok(zr) => zr,
-        Err(e) => {
-            eprintln!("skipping {:?}: failed to query zones: {}", dns_config_dn, e);
-            return;
-        },
-    };
-    let (zone_entries, _) = match zone_response.success() {
-        Ok(zrs) => zrs,
-        Err(e) => {
-            eprintln!("skipping {:?}: zone query failed: {}", dns_config_dn, e);
-            return;
-        },
-    };
+        "dnsZone",
+        &ATTRIBUTES_NAME,
+    ).await else { return };
     let mut zones = Vec::with_capacity(zone_entries.len());
-    for zone_raw_entry in zone_entries {
-        let zone_entry = SearchEntry::construct(zone_raw_entry);
+    for zone_entry in zone_entries {
         let zone_name = get_required_single_string_value(
-            &zone_entry, "name",
+            &zone_entry,
+            &ATTRIBUTE_NAME,
         );
         zones.push((zone_name, zone_entry.dn));
     }
@@ -93,51 +124,36 @@ async fn dump_zones(ldap: &mut Ldap, subdir_name: &str, dns_config_dn: &str) {
     for (zone_name, zone_dn) in zones {
         let mut zone_path = PathBuf::from(subdir_name);
         zone_path.push(format!("{}.dns", zone_name));
-        dump_zone(ldap, &zone_path, &zone_dn).await;
+        dump_zone(directory, &zone_path, &zone_dn).await;
     }
 }
 
 
-async fn dump_zone(ldap: &mut Ldap, file_name: &Path, zone_dn: &str) {
+async fn dump_zone<D: Directory>(directory: &mut D, file_name: &Path, zone_dn: &str) {
     // enumerate entries
-    let entries_result = ldap.search(
+    let Some(entries_entries) = directory.find_children(
         zone_dn,
-        Scope::OneLevel,
-        "(objectClass=dnsNode)",
-        vec!["name", "dnsRecord"],
-    ).await;
-    let entries_response = match entries_result {
-        Ok(er) => er,
-        Err(e) => {
-            eprintln!("skipping {:?}: failed to query entries: {}", zone_dn, e);
-            return;
-        },
-    };
-    let (entries_entries, _) = match entries_response.success() {
-        Ok(ees) => ees,
-        Err(e) => {
-            eprintln!("skipping {:?}: entries query failed: {}", zone_dn, e);
-            return;
-        },
-    };
-
+        "dnsNode",
+        &ATTRIBUTES_NAME_DNSRECORD,
+    ).await else { return };
     let file_name_parent = file_name.parent().unwrap();
     std::fs::create_dir_all(file_name_parent)
         .expect("failed to create directory for zone file");
     let mut file = File::create(file_name)
         .expect("failed to open zone file");
 
-    for entry_raw_entry in entries_entries {
-        let entry_entry = SearchEntry::construct(entry_raw_entry);
+    for entry_entry in entries_entries {
         let entry_name = get_required_single_string_value(
-            &entry_entry, "name",
+            &entry_entry, &ATTRIBUTE_NAME,
         );
-        let Some(entry_records) = entry_entry.bin_attrs.get("dnsRecord")
+        let Some(entry_records) = entry_entry.attributes
+            .get(&ATTRIBUTE_DNS_RECORD)
             else { continue };
         for record in entry_records {
             let dns_record = DnsRecord::try_decode(record)
                 .expect("failed to decode a DNS record");
             if dns_record.data.record_type().to_base_type() == 0x0000 {
+                // tombstone
                 continue;
             }
             write!(file, "{} ", entry_name).unwrap();
@@ -184,8 +200,11 @@ async fn run() {
                 ("forest", format!("CN=MicrosoftDNS,DC=ForestDnsZones,{}", naming_context)),
                 ("domain", format!("CN=MicrosoftDNS,DC=DomainDnsZones,{}", naming_context)),
             ];
+
+            let mut ldap_connection = LdapConnection::new(ldap);
+
             for (subdir_name, dns_config_dn) in &subdirs_and_dns_objects {
-                dump_zones(&mut ldap, subdir_name, dns_config_dn).await;
+                dump_zones(&mut ldap_connection, subdir_name, dns_config_dn).await;
             }
         },
         Mode::Decode(opts) => {
@@ -193,8 +212,29 @@ async fn run() {
                 .expect("failed to load LDIF file");
             let entries = parse_ldif(&ldif_string);
             let directory = directorify(&entries);
-            println!("{:#?}", directory);
-            // still a work in progress :-)
+
+            let msdns_objects = directory.descendants_with_rdn(
+                &ATTRIBUTE_CN,
+                MUCS_MICROSOFTDNS.clone(),
+            );
+            for (dn, _) in msdns_objects {
+                let Some(rdns) = dn_to_rdns(&dn)
+                    else { continue };
+                if rdns.len() < 2 {
+                    continue;
+                }
+
+                let mut dw = DirectoryWrapper::from(&directory);
+                if &rdns[1].key == &*ATTRIBUTE_CN && &rdns[1].value == &*MUCS_SYSTEM {
+                    dump_zones(&mut dw, "system", &dn).await;
+                } else if &rdns[1].key == &*ATTRIBUTE_DC && &rdns[1].value == &*MUCS_DOMAIN_DNS_ZONES {
+                    dump_zones(&mut dw, "domain", &dn).await;
+                } else if &rdns[1].key == &*ATTRIBUTE_DC && &rdns[1].value == &*MUCS_FOREST_DNS_ZONES {
+                    dump_zones(&mut dw, "forest", &dn).await;
+                } else {
+                    eprintln!("warning: cannot identify tree location of {:?}; skipping", dn);
+                }
+            }
         },
     }
 }

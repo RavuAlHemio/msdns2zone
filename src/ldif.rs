@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use base64::Engine;
+use unicase::UniCase;
 
 use crate::tiny_directory::AttributeBag;
 
@@ -125,12 +126,13 @@ pub fn parse_ldif(ldif: &str) -> Vec<AttributeBag> {
             };
 
             key_to_values
-                .entry(key.to_owned())
+                .entry(UniCase::new(key.to_owned()))
                 .or_insert_with(|| BTreeSet::new())
                 .insert(value);
         }
 
-        if !key_to_values.contains_key("dn") {
+        let dn_key = UniCase::new("dn".to_owned());
+        if !key_to_values.contains_key(&dn_key) {
             eprintln!("skipping LDIF record missing required \"dn\" pseudo-attribute: {:?}", key_to_values);
             continue;
         }

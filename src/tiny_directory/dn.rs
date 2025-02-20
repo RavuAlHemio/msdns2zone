@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::VecDeque, fmt};
 
 use unicase::UniCase;
 
@@ -10,10 +10,10 @@ const ALWAYS_ESCAPE_BYTES_SORTED: [u8; 7] = [b'"', b'+', b',', b';', b'<', b'>',
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Rdn {
     pub key: UniCase<String>,
-    pub value: Vec<u8>,
+    pub value: MaybeUniCaseString,
 }
 impl Rdn {
-    pub fn new(key: String, value: Vec<u8>) -> Self {
+    pub fn new(key: String, value: MaybeUniCaseString) -> Self {
         Self {
             key: UniCase::new(key),
             value,
@@ -23,7 +23,7 @@ impl Rdn {
 impl fmt::Display for Rdn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}=", self.key)?;
-        for (i, &b) in self.value.iter().enumerate() {
+        for (i, &b) in self.value.iter_bytes().enumerate() {
             let self_escape =
                 ALWAYS_ESCAPE_BYTES_SORTED.binary_search(&b).is_ok()
                 || (i == 0 && (b == b' ' || b == b'#'))
@@ -39,6 +39,46 @@ impl fmt::Display for Rdn {
         }
         Ok(())
     }
+}
+
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MaybeUniCaseString {
+    Text(UniCase<String>),
+    Binary(Vec<u8>),
+}
+impl MaybeUniCaseString {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Text(uni_case) => uni_case.len(),
+            Self::Binary(items) => items.len(),
+        }
+    }
+
+    pub fn iter_bytes(&self) -> std::slice::Iter<u8> {
+        match self {
+            Self::Text(uni_case) => uni_case.as_bytes().iter(),
+            Self::Binary(items) => items.iter(),
+        }
+    }
+
+    pub fn try_as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s.as_str()),
+            Self::Binary(_) => None,
+        }
+    }
+}
+impl From<Vec<u8>> for MaybeUniCaseString {
+    fn from(value: Vec<u8>) -> Self {
+        match String::from_utf8(value) {
+            Ok(s) => Self::Text(UniCase::new(s)),
+            Err(e) => Self::Binary(e.into_bytes()),
+        }
+    }
+}
+impl From<&str> for MaybeUniCaseString {
+    fn from(value: &str) -> Self { Self::Text(UniCase::new(value.to_owned())) }
 }
 
 pub fn dn_to_rdns(dn: &str) -> Option<Vec<Rdn>> {
@@ -58,7 +98,7 @@ pub fn dn_to_rdns(dn: &str) -> Option<Vec<Rdn>> {
         let rear_bytes = tokens_to_bytes(&value_tokens);
 
         let key_string = String::from_utf8(key_bytes).ok()?;
-        rdns.push(Rdn::new(key_string, rear_bytes));
+        rdns.push(Rdn::new(key_string, rear_bytes.into()));
     }
 
     Some(rdns)
@@ -146,7 +186,8 @@ fn find_from(haystack: &str, needle: char, offset: usize) -> Option<usize> {
 fn split_at_unescaped_commas<'a>(tokens: &[Token<'a>]) -> Vec<Vec<Token<'a>>> {
     let mut pieces = Vec::new();
     let mut current_piece = Vec::new();
-    for token in tokens {
+    let mut token_queue = VecDeque::from(tokens.to_vec());
+    while let Some(token) = token_queue.pop_front() {
         match token {
             Token::EscapedByte(_) => {
                 current_piece.push(token.clone());
@@ -168,8 +209,10 @@ fn split_at_unescaped_commas<'a>(tokens: &[Token<'a>]) -> Vec<Vec<Token<'a>>> {
                         }
                         let push_me = std::mem::replace(&mut current_piece, Vec::new());
                         pieces.push(push_me);
+
                         if after.len() > 0 {
-                            current_piece.push(Token::UnescapedSlice(after));
+                            // re-enqueue everything after the comma (might contain another comma)
+                            token_queue.push_front(Token::UnescapedSlice(after));
                         }
                     },
                 }
@@ -240,11 +283,10 @@ fn tokens_to_bytes(tokens: &[Token]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use unicase::UniCase;
-    use super::dn_to_rdns;
+    use super::{dn_to_rdns, MaybeUniCaseString};
 
-    fn uc(s: &str) -> UniCase<&str> {
-        UniCase::new(s)
-    }
+    fn uc(s: &str) -> UniCase<&str> { UniCase::new(s) }
+    fn mucs(b: &[u8]) -> MaybeUniCaseString { MaybeUniCaseString::from(b.to_vec()) }
 
     #[test]
     fn test_dn_to_rdns() {
@@ -254,47 +296,47 @@ mod tests {
         let rdns = dn_to_rdns("C=QQ").unwrap();
         assert_eq!(rdns.len(), 1);
         assert_eq!(rdns[0].key, uc("C"));
-        assert_eq!(rdns[0].value, b"QQ");
+        assert_eq!(rdns[0].value, mucs(b"QQ"));
 
         let rdns = dn_to_rdns("O=Dewey LLC,C=QQ").unwrap();
         assert_eq!(rdns.len(), 2);
         assert_eq!(rdns[0].key, uc("O"));
-        assert_eq!(rdns[0].value, b"Dewey LLC");
+        assert_eq!(rdns[0].value, mucs(b"Dewey LLC"));
         assert_eq!(rdns[1].key, uc("C"));
-        assert_eq!(rdns[1].value, b"QQ");
+        assert_eq!(rdns[1].value, mucs(b"QQ"));
 
         let rdns = dn_to_rdns("O=Dewey\\, Cheatham and Howe LLC,C=QQ").unwrap();
         assert_eq!(rdns.len(), 2);
         assert_eq!(rdns[0].key, uc("O"));
-        assert_eq!(rdns[0].value, b"Dewey, Cheatham and Howe LLC");
+        assert_eq!(rdns[0].value, mucs(b"Dewey, Cheatham and Howe LLC"));
         assert_eq!(rdns[1].key, uc("C"));
-        assert_eq!(rdns[1].value, b"QQ");
+        assert_eq!(rdns[1].value, mucs(b"QQ"));
 
         let rdns = dn_to_rdns("givenName=Ond\\C5\\99ej,SN=Ho\\C5\\A1ek,C=QQ").unwrap();
         assert_eq!(rdns.len(), 3);
         assert_eq!(rdns[0].key, uc("givenName"));
-        assert_eq!(rdns[0].value, "Ond\u{0159}ej".as_bytes());
+        assert_eq!(rdns[0].value, mucs("Ond\u{0159}ej".as_bytes()));
         assert_eq!(rdns[1].key, uc("SN"));
-        assert_eq!(rdns[1].value, "Ho\u{0161}ek".as_bytes());
+        assert_eq!(rdns[1].value, mucs("Ho\u{0161}ek".as_bytes()));
         assert_eq!(rdns[2].key, uc("C"));
-        assert_eq!(rdns[2].value, b"QQ");
+        assert_eq!(rdns[2].value, mucs(b"QQ"));
 
         let rdns = dn_to_rdns("one=two=three").unwrap();
         assert_eq!(rdns.len(), 1);
         assert_eq!(rdns[0].key, uc("one"));
-        assert_eq!(rdns[0].value, b"two=three");
+        assert_eq!(rdns[0].value, mucs(b"two=three"));
 
         let rdns = dn_to_rdns("one=,two=").unwrap();
         assert_eq!(rdns.len(), 2);
         assert_eq!(rdns[0].key, uc("one"));
-        assert_eq!(rdns[0].value, b"");
+        assert_eq!(rdns[0].value, mucs(b""));
         assert_eq!(rdns[1].key, uc("two"));
-        assert_eq!(rdns[1].value, b"");
+        assert_eq!(rdns[1].value, mucs(b""));
 
         let rdns = dn_to_rdns("one=\\\"").unwrap();
         assert_eq!(rdns.len(), 1);
         assert_eq!(rdns[0].key, uc("one"));
-        assert_eq!(rdns[0].value, b"\"");
+        assert_eq!(rdns[0].value, mucs(b"\""));
 
         assert_eq!(dn_to_rdns("one=\\"), None);
         assert_eq!(dn_to_rdns("one=\\Z"), None);
