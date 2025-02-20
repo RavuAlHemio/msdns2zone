@@ -122,7 +122,7 @@ impl<'a> Directory for DirectoryWrapper<'a> {
 
         // descend through the directory tree
         let mut current_node = self.object;
-        for rdn in &base_dn_rdns {
+        for rdn in base_dn_rdns.iter().rev() {
             println!("looking for {:?} among {:?}", rdn, current_node.children.keys());
             let requested_child = match current_node.children.get(rdn) {
                 Some(rc) => rc,
