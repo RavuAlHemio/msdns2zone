@@ -124,12 +124,12 @@ async fn dump_zones<D: Directory>(directory: &mut D, subdir_name: &str, dns_conf
     for (zone_name, zone_dn) in zones {
         let mut zone_path = PathBuf::from(subdir_name);
         zone_path.push(format!("{}.dns", zone_name));
-        dump_zone(directory, &zone_path, &zone_dn).await;
+        dump_zone(directory, &zone_path, &zone_name, &zone_dn).await;
     }
 }
 
 
-async fn dump_zone<D: Directory>(directory: &mut D, file_name: &Path, zone_dn: &str) {
+async fn dump_zone<D: Directory>(directory: &mut D, file_name: &Path, zone_dns_name: &str, zone_dn: &str) {
     // enumerate entries
     let Some(entries_entries) = directory.find_children(
         zone_dn,
@@ -141,6 +141,9 @@ async fn dump_zone<D: Directory>(directory: &mut D, file_name: &Path, zone_dn: &
         .expect("failed to create directory for zone file");
     let mut file = File::create(file_name)
         .expect("failed to open zone file");
+
+    // spit out origin
+    writeln!(file, "$ORIGIN {}.", zone_dns_name).unwrap();
 
     for entry_entry in entries_entries {
         let entry_name = get_required_single_string_value(
