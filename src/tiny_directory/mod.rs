@@ -129,7 +129,7 @@ impl<'a> Directory for DirectoryWrapper<'a> {
                     if let Some(rdn_value_text) = rdn.value.try_as_str() {
                         eprintln!("requested child {}={} not found", rdn.key, rdn_value_text);
                     } else {
-                        eprintln!("requested child {}={:?}", rdn.key, rdn.value);
+                        eprintln!("requested child {}={:?} not found", rdn.key, rdn.value);
                     }
                     return None;
                 },
