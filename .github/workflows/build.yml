@@ -1,0 +1,110 @@
+name: msdns2zone build
+on: [push]
+jobs:
+  build-arch:
+    strategy:
+      matrix:
+        build_mode: ["debug", "release"]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - name: update packages
+        run: pacman -Syu --noconfirm
+      - name: install packages
+        run: pacman -S --needed --noconfirm cargo git
+      - name: check out repository code
+        uses: actions/checkout@v4
+      - name: run debug build
+        run: cargo build
+        if: matrix.build_mode == 'debug'
+      - name: run release build
+        run: cargo build --release
+        if: matrix.build_mode == 'release'
+      - name: run debug tests
+        run: cargo test
+        if: matrix.build_mode == 'debug'
+      - name: run release tests
+        run: cargo test --release
+        if: matrix.build_mode == 'release'
+  build-ubuntu:
+    strategy:
+      matrix:
+        build_mode: ["debug", "release"]
+        ubuntu_version: ["focal", "jammy", "noble"]
+    runs-on: ubuntu-latest
+    container: ubuntu:${{ matrix.ubuntu_version }}
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
+      RUST_BACKTRACE: 1
+    steps:
+      - name: update apt database
+        run: apt-get -y update
+      - name: update packages
+        run: apt-get -y dist-upgrade
+      - name: install packages
+        run: apt-get -y install curl build-essential git
+      - name: install rustup
+        run: "curl --proto '=https' -sSf https://sh.rustup.rs | sh -s -- -y"
+      - name: check out repository code
+        uses: actions/checkout@v4
+      - name: run debug build
+        run: '. $HOME/.cargo/env && cargo build'
+        if: matrix.build_mode == 'debug'
+      - name: run release build
+        run: '. $HOME/.cargo/env && cargo build --release'
+        if: matrix.build_mode == 'release'
+      - name: run debug tests
+        run: '. $HOME/.cargo/env && cargo test'
+        if: matrix.build_mode == 'debug'
+      - name: run release tests
+        run: '. $HOME/.cargo/env && cargo test --release'
+        if: matrix.build_mode == 'release'
+  build-windows:
+    strategy:
+      matrix:
+        build_mode: ["debug", "release"]
+    runs-on: windows-latest
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - name: check out repository code
+        uses: actions/checkout@v4
+      - name: run debug build
+        run: cargo build
+        if: matrix.build_mode == 'debug'
+      - name: run release build
+        run: cargo build --release
+        if: matrix.build_mode == 'release'
+      - name: run debug tests
+        run: cargo test
+        if: matrix.build_mode == 'debug'
+      - name: run release tests
+        run: cargo test --release
+        if: matrix.build_mode == 'release'
+  build-macos:
+    strategy:
+      matrix:
+        build_mode: ["debug", "release"]
+    runs-on: macos-latest
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - name: check out repository code
+        uses: actions/checkout@v4
+      - name: run debug build
+        run: cargo build
+        if: matrix.build_mode == 'debug'
+      - name: run release build
+        run: cargo build --release
+        if: matrix.build_mode == 'release'
+      - name: run debug tests
+        run: cargo test
+        if: matrix.build_mode == 'debug'
+      - name: run release tests
+        run: cargo test --release
+        if: matrix.build_mode == 'release'
